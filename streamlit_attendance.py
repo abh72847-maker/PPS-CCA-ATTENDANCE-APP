@@ -66,14 +66,6 @@ def build_report_rows(students, attendance, current_day):
     return rows
 
 
-def mark_attendance(day, student, status):
-    st.session_state.attendance[day][student["roll"]] = {
-        "name": student["name"],
-        "status": status,
-        "time": datetime.now().strftime("%I:%M:%S %p"),
-    }
-
-
 def build_day_dataframe(students, day_records):
     rows = []
     for student in students:
@@ -114,41 +106,158 @@ st.markdown(
     """
     <style>
     .stApp {
-        background: linear-gradient(180deg, #eef4ff 0%, #f8fbff 100%);
+        background:
+            radial-gradient(circle at top left, rgba(56, 189, 248, 0.18), transparent 28%),
+            radial-gradient(circle at top right, rgba(14, 165, 233, 0.12), transparent 24%),
+            linear-gradient(180deg, #edf4ff 0%, #f8fbff 100%);
     }
-    .top-card {
-        padding: 1rem 1.25rem;
-        border-radius: 18px;
-        background: #1d4ed8;
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #f8fbff 0%, #eef4ff 100%);
+        border-right: 1px solid rgba(148, 163, 184, 0.18);
+    }
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 1.5rem;
+    }
+    .hero-card {
+        padding: 1.5rem 1.6rem;
+        border-radius: 26px;
+        background: linear-gradient(135deg, #1d4ed8 0%, #0f766e 100%);
         color: white;
-        box-shadow: 0 14px 30px rgba(37, 99, 235, 0.18);
+        box-shadow: 0 24px 50px rgba(29, 78, 216, 0.20);
         margin-bottom: 1rem;
+        position: relative;
+        overflow: hidden;
     }
-    .student-row {
-        padding: 0.75rem 0.9rem;
-        border: 1px solid #dbe6ff;
-        border-radius: 14px;
-        background: white;
-        margin-bottom: 0.55rem;
+    .hero-card::before {
+        content: "";
+        position: absolute;
+        right: -45px;
+        top: -55px;
+        width: 190px;
+        height: 190px;
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 50%;
     }
-    .status-pill {
-        display: inline-block;
-        padding: 0.2rem 0.65rem;
+    .hero-kicker {
+        font-size: 0.82rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        opacity: 0.82;
+        margin-bottom: 0.4rem;
+    }
+    .hero-title {
+        font-size: 2rem;
+        font-weight: 800;
+        line-height: 1.1;
+        margin: 0;
+    }
+    .hero-subtitle {
+        margin: 0.5rem 0 0 0;
+        font-size: 1rem;
+        color: rgba(255, 255, 255, 0.92);
+        max-width: 42rem;
+    }
+    .day-chip-row {
+        display: flex;
+        gap: 0.55rem;
+        flex-wrap: wrap;
+        margin-top: 1rem;
+    }
+    .day-chip {
+        padding: 0.45rem 0.8rem;
         border-radius: 999px;
-        font-size: 0.84rem;
+        background: rgba(255, 255, 255, 0.16);
+        color: rgba(255, 255, 255, 0.88);
+        font-size: 0.85rem;
         font-weight: 700;
     }
+    .day-chip.active {
+        background: white;
+        color: #0f766e;
+    }
+    .info-strip {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        padding: 0.95rem 1rem;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.82);
+        border: 1px solid rgba(191, 219, 254, 0.95);
+        margin-bottom: 1rem;
+        box-shadow: 0 12px 28px rgba(148, 163, 184, 0.10);
+        backdrop-filter: blur(8px);
+    }
+    .info-main {
+        color: #0f172a;
+        font-weight: 800;
+    }
+    .info-sub {
+        color: #64748b;
+        font-size: 0.93rem;
+    }
+    .highlight-day {
+        color: #0f766e;
+    }
+    .panel {
+        background: rgba(255, 255, 255, 0.82);
+        border: 1px solid rgba(191, 219, 254, 0.95);
+        border-radius: 22px;
+        padding: 1rem 1rem 0.9rem 1rem;
+        box-shadow: 0 12px 28px rgba(148, 163, 184, 0.10);
+        backdrop-filter: blur(8px);
+        margin-bottom: 1rem;
+    }
+    .section-title {
+        font-size: 1.12rem;
+        font-weight: 800;
+        color: #0f172a;
+        margin-bottom: 0.2rem;
+    }
+    .section-note {
+        color: #64748b;
+        font-size: 0.92rem;
+        margin-bottom: 0.9rem;
+    }
+    .stat-card {
+        border-radius: 18px;
+        padding: 0.95rem 1rem;
+        color: white;
+        margin-bottom: 0.75rem;
+        box-shadow: 0 10px 24px rgba(148, 163, 184, 0.14);
+    }
+    .stat-label {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        opacity: 0.84;
+        margin-bottom: 0.35rem;
+    }
+    .stat-value {
+        font-size: 1.8rem;
+        font-weight: 800;
+        line-height: 1;
+    }
+    .total { background: linear-gradient(135deg, #2563eb, #38bdf8); }
+    .present { background: linear-gradient(135deg, #15803d, #4ade80); }
+    .absent { background: linear-gradient(135deg, #b91c1c, #fb7185); }
+    .pending { background: linear-gradient(135deg, #a16207, #fbbf24); }
+    div[data-testid="stDataEditor"], div[data-testid="stDataFrame"] {
+        background: white;
+        border: 1px solid #dbeafe;
+        border-radius: 18px;
+        box-shadow: 0 8px 22px rgba(148, 163, 184, 0.10);
+        overflow: hidden;
+    }
+    div.stButton > button, div.stDownloadButton > button {
+        border-radius: 14px;
+        border: none;
+        font-weight: 700;
+        min-height: 2.8rem;
+    }
     </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-st.markdown(
-    f"""
-    <div class="top-card">
-        <h2 style="margin:0;">Student Attendance Dashboard</h2>
-        <p style="margin:0.3rem 0 0 0;">{datetime.now().strftime("%A, %d %B %Y")}</p>
-    </div>
     """,
     unsafe_allow_html=True,
 )
@@ -170,8 +279,40 @@ if "students" not in st.session_state or st.session_state.get("data_source") != 
     st.session_state.attendance = {day: {} for day in DAYS}
 
 students = st.session_state.students
-current_day = st.sidebar.radio("Select attendance day", DAYS, index=0)
+today_name = datetime.now().strftime("%A")
+default_day_index = DAYS.index(today_name) if today_name in DAYS else 0
+current_day = st.sidebar.radio("Select attendance day", DAYS, index=default_day_index)
 st.sidebar.success(f"Using fixed file: {data_source}")
+st.sidebar.caption("Choose a day, edit the table, then save that day.")
+
+st.markdown(
+    f"""
+    <div class="hero-card">
+        <div class="hero-kicker">Attendance Suite</div>
+        <h1 class="hero-title">Student Attendance Dashboard</h1>
+        <p class="hero-subtitle">
+            Fast day-wise attendance marking with a cleaner classroom dashboard and same-day report export.
+        </p>
+        <div class="day-chip-row">
+            {''.join(f'<span class="day-chip{" active" if day == current_day else ""}">{day}</span>' for day in DAYS)}
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    f"""
+    <div class="info-strip">
+        <div>
+            <div class="info-main">Working on <span class="highlight-day">{current_day}</span></div>
+            <div class="info-sub">{datetime.now().strftime("%A, %d %B %Y")} • Source file: {data_source}</div>
+        </div>
+        <div class="info-sub">Update statuses in the table and save the selected day.</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 editor_key = f"editor_{current_day}"
 if editor_key not in st.session_state:
@@ -179,10 +320,13 @@ if editor_key not in st.session_state:
         students, st.session_state.attendance[current_day]
     )
 
-left_col, right_col = st.columns([2.2, 1])
+left_col, right_col = st.columns([2.3, 1])
 
 with right_col:
-    st.subheader("Summary")
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Summary</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-note">Quick view of attendance for the selected day.</div>', unsafe_allow_html=True)
+
     preview_df = st.session_state[editor_key]
     total = len(preview_df)
     present = int((preview_df["Status"] == "Present").sum())
@@ -191,10 +335,22 @@ with right_col:
 
     metric_a, metric_b = st.columns(2)
     metric_c, metric_d = st.columns(2)
-    metric_a.metric("Total", total)
-    metric_b.metric("Present", present)
-    metric_c.metric("Absent", absent)
-    metric_d.metric("Pending", pending)
+    metric_a.markdown(
+        f'<div class="stat-card total"><div class="stat-label">Total</div><div class="stat-value">{total}</div></div>',
+        unsafe_allow_html=True,
+    )
+    metric_b.markdown(
+        f'<div class="stat-card present"><div class="stat-label">Present</div><div class="stat-value">{present}</div></div>',
+        unsafe_allow_html=True,
+    )
+    metric_c.markdown(
+        f'<div class="stat-card absent"><div class="stat-label">Absent</div><div class="stat-value">{absent}</div></div>',
+        unsafe_allow_html=True,
+    )
+    metric_d.markdown(
+        f'<div class="stat-card pending"><div class="stat-label">Pending</div><div class="stat-value">{pending}</div></div>',
+        unsafe_allow_html=True,
+    )
 
     st.markdown(f"### {current_day} Details")
     detail_rows = preview_df[preview_df["Status"] != "Pending"].copy()
@@ -219,9 +375,19 @@ with right_col:
         st.session_state[editor_key] = build_day_dataframe(students, {})
         st.rerun()
 
+    st.markdown("</div>", unsafe_allow_html=True)
+
 with left_col:
-    st.subheader(f"Mark Attendance for {current_day}")
-    st.caption(f"Student source: {data_source}")
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="section-title">Mark Attendance for {current_day}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="section-note">Use the status dropdown for each student, then save the day when you are done.</div>',
+        unsafe_allow_html=True,
+    )
+
     edited_df = st.data_editor(
         st.session_state[editor_key],
         use_container_width=True,
@@ -249,3 +415,5 @@ with left_col:
         )
         st.success(f"{current_day} attendance saved in the app.")
         st.rerun()
+
+    st.markdown("</div>", unsafe_allow_html=True)
