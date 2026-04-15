@@ -47,22 +47,21 @@ def load_students_from_excel(file_obj):
     return students
 
 
-def build_report_rows(students, attendance):
+def build_report_rows(students, attendance, current_day):
     rows = []
-    for day in DAYS:
-        day_records = attendance.get(day, {})
-        for student in students:
-            roll = student["roll"]
-            record = day_records.get(roll, {})
-            rows.append(
-                {
-                    "Day": day,
-                    "Roll No": roll,
-                    "Student Name": student["name"],
-                    "Status": record.get("status", "Pending"),
-                    "Marked Time": record.get("time", ""),
-                }
-            )
+    day_records = attendance.get(current_day, {})
+    for student in students:
+        roll = student["roll"]
+        record = day_records.get(roll, {})
+        rows.append(
+            {
+                "Day": current_day,
+                "Roll No": roll,
+                "Student Name": student["name"],
+                "Status": record.get("status", "Pending"),
+                "Marked Time": record.get("time", ""),
+            }
+        )
     return rows
 
 
@@ -119,20 +118,15 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-uploaded_file = st.sidebar.file_uploader("Upload student list (.xlsx)", type=["xlsx"])
-
 students = []
 data_source = None
 
-if uploaded_file is not None:
-    students = load_students_from_excel(uploaded_file)
-    data_source = uploaded_file.name
-elif DEFAULT_FILE.exists():
+if DEFAULT_FILE.exists():
     students = load_students_from_excel(DEFAULT_FILE)
     data_source = DEFAULT_FILE.name
 
 if not students:
-    st.warning("Upload your `student list.xlsx` file from the sidebar to start the app.")
+    st.error("`student list.xlsx` was not found in the project folder.")
     st.stop()
 
 if "students" not in st.session_state or st.session_state.get("data_source") != data_source:
@@ -142,6 +136,7 @@ if "students" not in st.session_state or st.session_state.get("data_source") != 
 
 students = st.session_state.students
 current_day = st.sidebar.radio("Select attendance day", DAYS, index=0)
+st.sidebar.success(f"Using fixed file: {data_source}")
 
 left_col, right_col = st.columns([2.2, 1])
 
@@ -178,12 +173,12 @@ with right_col:
     else:
         st.info("No attendance marked yet for this day.")
 
-    report_df = pd.DataFrame(build_report_rows(students, st.session_state.attendance))
+    report_df = pd.DataFrame(build_report_rows(students, st.session_state.attendance, current_day))
     csv_data = report_df.to_csv(index=False).encode("utf-8")
     st.download_button(
-        "Download Attendance Report",
+        f"Download {current_day} Report",
         data=csv_data,
-        file_name="attendance_report.csv",
+        file_name=f"attendance_{current_day.lower()}.csv",
         mime="text/csv",
         use_container_width=True,
     )
