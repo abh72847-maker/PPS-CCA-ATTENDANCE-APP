@@ -13,6 +13,7 @@ DEFAULT_FILE = APP_DIR / "student list.xlsx"
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 
 
+@st.cache_data
 def load_students_from_excel(file_obj):
     ns = {"a": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
     students = []
@@ -73,6 +74,40 @@ def mark_attendance(day, student, status):
     }
 
 
+def build_day_dataframe(students, day_records):
+    rows = []
+    for student in students:
+        record = day_records.get(student["roll"], {})
+        rows.append(
+            {
+                "Roll No": student["roll"],
+                "Student Name": student["name"],
+                "Status": record.get("status", "Pending"),
+                "Marked Time": record.get("time", ""),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def save_day_from_editor(current_day, edited_df):
+    previous_records = st.session_state.attendance[current_day]
+    updated_records = {}
+
+    for _, row in edited_df.iterrows():
+        status = row["Status"]
+        if status == "Pending":
+            continue
+
+        old_record = previous_records.get(row["Roll No"], {})
+        updated_records[row["Roll No"]] = {
+            "name": row["Student Name"],
+            "status": status,
+            "time": old_record.get("time") or datetime.now().strftime("%I:%M:%S %p"),
+        }
+
+    st.session_state.attendance[current_day] = updated_records
+
+
 st.set_page_config(page_title="Attendance Dashboard", page_icon="📘", layout="wide")
 
 st.markdown(
@@ -112,7 +147,7 @@ st.markdown(
     f"""
     <div class="top-card">
         <h2 style="margin:0;">Student Attendance Dashboard</h2>
-        <p style="margin:0.3rem 0 0 0;">{datetime.now().strftime("%A, %d %B %Y   %I:%M:%S %p")}</p>
+        <p style="margin:0.3rem 0 0 0;">{datetime.now().strftime("%A, %d %B %Y")}</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -138,15 +173,21 @@ students = st.session_state.students
 current_day = st.sidebar.radio("Select attendance day", DAYS, index=0)
 st.sidebar.success(f"Using fixed file: {data_source}")
 
+editor_key = f"editor_{current_day}"
+if editor_key not in st.session_state:
+    st.session_state[editor_key] = build_day_dataframe(
+        students, st.session_state.attendance[current_day]
+    )
+
 left_col, right_col = st.columns([2.2, 1])
 
 with right_col:
     st.subheader("Summary")
-    day_records = st.session_state.attendance[current_day]
-    total = len(students)
-    present = sum(1 for item in day_records.values() if item["status"] == "Present")
-    absent = sum(1 for item in day_records.values() if item["status"] == "Absent")
-    pending = total - len(day_records)
+    preview_df = st.session_state[editor_key]
+    total = len(preview_df)
+    present = int((preview_df["Status"] == "Present").sum())
+    absent = int((preview_df["Status"] == "Absent").sum())
+    pending = int((preview_df["Status"] == "Pending").sum())
 
     metric_a, metric_b = st.columns(2)
     metric_c, metric_d = st.columns(2)
@@ -156,20 +197,10 @@ with right_col:
     metric_d.metric("Pending", pending)
 
     st.markdown(f"### {current_day} Details")
-    detail_rows = []
-    for student in students:
-        record = day_records.get(student["roll"])
-        if record:
-            detail_rows.append(
-                {
-                    "Roll No": student["roll"],
-                    "Status": record["status"],
-                    "Time": record["time"],
-                }
-            )
+    detail_rows = preview_df[preview_df["Status"] != "Pending"].copy()
 
-    if detail_rows:
-        st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
+    if not detail_rows.empty:
+        st.dataframe(detail_rows, use_container_width=True, hide_index=True)
     else:
         st.info("No attendance marked yet for this day.")
 
@@ -185,29 +216,36 @@ with right_col:
 
     if st.button("Reset Current Day", use_container_width=True):
         st.session_state.attendance[current_day] = {}
+        st.session_state[editor_key] = build_day_dataframe(students, {})
         st.rerun()
 
 with left_col:
     st.subheader(f"Mark Attendance for {current_day}")
     st.caption(f"Student source: {data_source}")
+    edited_df = st.data_editor(
+        st.session_state[editor_key],
+        use_container_width=True,
+        hide_index=True,
+        num_rows="fixed",
+        column_config={
+            "Roll No": st.column_config.TextColumn(disabled=True),
+            "Student Name": st.column_config.TextColumn(disabled=True, width="large"),
+            "Status": st.column_config.SelectboxColumn(
+                "Status",
+                options=["Pending", "Present", "Absent"],
+                required=True,
+                width="medium",
+            ),
+            "Marked Time": st.column_config.TextColumn(disabled=True),
+        },
+        key=f"data_editor_{current_day}",
+    )
+    st.session_state[editor_key] = edited_df
 
-    for student in students:
-        record = st.session_state.attendance[current_day].get(student["roll"])
-        if not record:
-            badge = '<span class="status-pill" style="background:#fef3c7;color:#92400e;">Pending</span>'
-        elif record["status"] == "Present":
-            badge = '<span class="status-pill" style="background:#dcfce7;color:#166534;">Present</span>'
-        else:
-            badge = '<span class="status-pill" style="background:#fee2e2;color:#991b1b;">Absent</span>'
-
-        st.markdown('<div class="student-row">', unsafe_allow_html=True)
-        c1, c2, c3, c4 = st.columns([1.1, 2.8, 1, 1])
-        c1.markdown(f"**{student['roll']}**")
-        c2.markdown(f"{student['name']}  \n{badge}", unsafe_allow_html=True)
-        if c3.button("Present", key=f"p-{current_day}-{student['roll']}", use_container_width=True):
-            mark_attendance(current_day, student, "Present")
-            st.rerun()
-        if c4.button("Absent", key=f"a-{current_day}-{student['roll']}", use_container_width=True):
-            mark_attendance(current_day, student, "Absent")
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+    if st.button(f"Save {current_day} Attendance", type="primary", use_container_width=True):
+        save_day_from_editor(current_day, edited_df)
+        st.session_state[editor_key] = build_day_dataframe(
+            students, st.session_state.attendance[current_day]
+        )
+        st.success(f"{current_day} attendance saved in the app.")
+        st.rerun()
