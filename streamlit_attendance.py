@@ -1,3 +1,4 @@
+import sqlite3
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -7,12 +8,49 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 import streamlit as st
 
-
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_FILE = APP_DIR / "student list.xlsx"
+DB_FILE = APP_DIR / "attendance.db"
 DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 
+# --- DATABASE SETUP ---
+def init_db():
+    """Initialize the SQLite database for permanent storage."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS attendance (
+            day TEXT, 
+            roll_no TEXT, 
+            name TEXT, 
+            status TEXT, 
+            marked_time TEXT,
+            PRIMARY KEY (day, roll_no)
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
+def load_attendance_from_db():
+    """Load attendance from SQLite into the dictionary structure expected by the app."""
+    init_db()
+    conn = sqlite3.connect(DB_FILE)
+    df = pd.read_sql_query("SELECT * FROM attendance", conn)
+    conn.close()
+    
+    attendance = {day: {} for day in DAYS}
+    for _, row in df.iterrows():
+        if row['day'] in attendance:
+            # Skip pending records so they don't count towards 'marked' totals
+            if row['status'] != "Pending":
+                attendance[row['day']][row['roll_no']] = {
+                    "name": row['name'],
+                    "status": row['status'],
+                    "time": row['marked_time']
+                }
+    return attendance
+
+# --- EXCEL LOADING ---
 @st.cache_data
 def load_students_from_excel(file_obj):
     ns = {"a": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
@@ -47,7 +85,7 @@ def load_students_from_excel(file_obj):
 
     return students
 
-
+# --- DATA HELPERS ---
 def build_day_dataframe(students, day_records):
     rows = []
     for student in students:
@@ -63,7 +101,6 @@ def build_day_dataframe(students, day_records):
             }
         )
     return pd.DataFrame(rows)
-
 
 def build_report_rows(students, attendance, current_day):
     rows = []
@@ -81,11 +118,9 @@ def build_report_rows(students, attendance, current_day):
         )
     return rows
 
-
 def validate_editor(df):
     invalid = df[df["Present"] & df["Absent"]]
     return invalid["Roll No"].tolist()
-
 
 def save_day_from_editor(current_day, edited_df):
     invalid_rolls = validate_editor(edited_df)
@@ -94,6 +129,10 @@ def save_day_from_editor(current_day, edited_df):
 
     previous_records = st.session_state.attendance[current_day]
     updated_records = {}
+    
+    # SQLite connection
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
 
     for _, row in edited_df.iterrows():
         if row["Present"]:
@@ -103,19 +142,27 @@ def save_day_from_editor(current_day, edited_df):
         else:
             status = "Pending"
 
-        if status == "Pending":
-            continue
-
         old_record = previous_records.get(row["Roll No"], {})
-        updated_records[row["Roll No"]] = {
-            "name": row["Student Name"],
-            "status": status,
-            "time": old_record.get("time") or row["Marked Time"] or datetime.now().strftime("%I:%M:%S %p"),
-        }
+        marked_time = old_record.get("time") or row["Marked Time"] or datetime.now().strftime("%I:%M:%S %p")
+        
+        if status != "Pending":
+            updated_records[row["Roll No"]] = {
+                "name": row["Student Name"],
+                "status": status,
+                "time": marked_time,
+            }
+            
+        # Update Database
+        c.execute('''
+            INSERT OR REPLACE INTO attendance (day, roll_no, name, status, marked_time)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (current_day, row["Roll No"], row["Student Name"], status, marked_time if status != "Pending" else ""))
+
+    conn.commit()
+    conn.close()
 
     st.session_state.attendance[current_day] = updated_records
     return []
-
 
 def apply_bulk_choice(base_df, filtered_df, choice):
     updated_df = base_df.copy()
@@ -139,16 +186,14 @@ def apply_bulk_choice(base_df, filtered_df, choice):
 
     return updated_df
 
-
 def calculate_counts(attendance, students, day):
     records = attendance.get(day, {})
     total = len(students)
     present = sum(1 for item in records.values() if item["status"] == "Present")
     absent = sum(1 for item in records.values() if item["status"] == "Absent")
-    pending = total - len(records)
+    pending = total - (present + absent)
     completion = 0 if total == 0 else int(((present + absent) / total) * 100)
     return total, present, absent, pending, completion
-
 
 def render_stat_card(title, value, class_name):
     return (
@@ -158,12 +203,14 @@ def render_stat_card(title, value, class_name):
         f"</div>"
     )
 
-
+# --- UI SETUP ---
 st.set_page_config(page_title="Attendance Dashboard", page_icon="A", layout="wide")
 
+# CSS Updated for Dark Mode Support via Media Queries
 st.markdown(
     """
     <style>
+    /* Default Light Mode */
     .stApp {
         background:
             radial-gradient(circle at 10% 0%, rgba(56, 189, 248, 0.20), transparent 26%),
@@ -325,6 +372,39 @@ st.markdown(
         padding: 0.2rem 0.5rem;
         margin-right: 0.35rem;
     }
+    
+    /* Dynamic Dark Mode Overrides */
+    @media (prefers-color-scheme: dark) {
+        .stApp {
+            background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+        }
+        [data-testid="stSidebar"] {
+            background: #0f172a;
+            border-right: 1px solid rgba(255,255,255,0.05);
+        }
+        .panel, .day-strip {
+            background: rgba(30, 41, 59, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 14px 30px rgba(0, 0, 0, 0.3);
+            color: #f8fafc;
+        }
+        .section-title { color: #f8fafc; }
+        .section-note { color: #94a3b8; }
+        .overview-card {
+            background: linear-gradient(180deg, #1e293b, #0f172a);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        div[data-testid="stDataEditor"], div[data-testid="stDataFrame"] {
+            background: #1e293b;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        div[role="radiogroup"] > label {
+            background: #1e293b;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #f8fafc;
+        }
+    }
+    
     @media (max-width: 1100px) {
         .overview-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -335,6 +415,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# --- INITIALIZATION ---
 students = []
 data_source = None
 if DEFAULT_FILE.exists():
@@ -348,7 +429,8 @@ if not students:
 if "students" not in st.session_state or st.session_state.get("data_source") != data_source:
     st.session_state.students = students
     st.session_state.data_source = data_source
-    st.session_state.attendance = {day: {} for day in DAYS}
+    # Load from DB instead of empty dictionaries!
+    st.session_state.attendance = load_attendance_from_db() 
     st.session_state.current_day = DAYS[0]
 
 students = st.session_state.students
@@ -360,6 +442,7 @@ if "current_day" not in st.session_state:
 st.sidebar.title("Quick Help")
 st.sidebar.info("Use the main page day selector and tabs. The sidebar is now just for guidance.")
 st.sidebar.caption(f"Source file: {data_source}")
+st.sidebar.caption("Data Storage: SQLite Backend 🟢")
 
 st.markdown(
     f"""
@@ -411,8 +494,9 @@ for day in DAYS:
         f'<div class="overview-card{extra}"><div class="overview-day">{day}</div><div class="overview-count">{count}</div><div class="overview-meta">marked students</div></div>'
     )
 
-overview_tab, attendance_tab, reports_tab, settings_tab = st.tabs(
-    ["Overview", "Attendance", "Reports", "Settings"]
+# Added Weekly Summary Tab
+overview_tab, attendance_tab, reports_tab, weekly_summary_tab, settings_tab = st.tabs(
+    ["Overview", "Attendance", "Reports", "Weekly Summary", "Settings"]
 )
 
 with overview_tab:
@@ -542,14 +626,14 @@ with attendance_tab:
             st.session_state[editor_key] = build_day_dataframe(
                 students, st.session_state.attendance[current_day]
             )
-            st.success(f"{current_day} attendance saved.")
+            st.success(f"{current_day} attendance saved securely to database.")
             st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
 
 with reports_tab:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">Reports</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Daily Reports</div>', unsafe_allow_html=True)
     st.markdown(
         f'<div class="section-note">Download the report for {current_day}. Pending students are included automatically.</div>',
         unsafe_allow_html=True,
@@ -574,17 +658,58 @@ with reports_tab:
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
-with settings_tab:
+# NEW TAB: Weekly Summary
+with weekly_summary_tab:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">Quick Actions</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Full Week At A Glance</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="section-note">Reset only the selected day when you want to start that day again.</div>',
+        '<div class="section-note">A complete matrix of all students across the entire week.</div>',
         unsafe_allow_html=True,
     )
-    st.warning(f"This will clear only {current_day}. Other days will stay unchanged.")
+    
+    summary_data = []
+    for student in students:
+        row = {"Roll No": student["roll"], "Student Name": student["name"]}
+        for day in DAYS:
+            status = st.session_state.attendance.get(day, {}).get(student["roll"], {}).get("status", "-")
+            row[day] = "✅" if status == "Present" else "❌" if status == "Absent" else "-"
+        summary_data.append(row)
+        
+    summary_df = pd.DataFrame(summary_data)
+    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+    
+    weekly_csv = summary_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download Complete Weekly Matrix",
+        data=weekly_csv,
+        file_name=f"weekly_summary_matrix.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with settings_tab:
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Quick Actions & DB Management</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-note">Manage your daily resets and local database storage safely here.</div>',
+        unsafe_allow_html=True,
+    )
+    st.warning(f"Resetting will clear {current_day} from both memory and the database.")
+    
     if st.button("Reset Current Day", use_container_width=True):
+        # Clear from session state
         st.session_state.attendance[current_day] = {}
         st.session_state[editor_key] = build_day_dataframe(students, {})
+        
+        # Clear from SQLite Database
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("DELETE FROM attendance WHERE day=?", (current_day,))
+        conn.commit()
+        conn.close()
+        
         st.rerun()
-    st.info("The main controls now live on the page itself, so the teacher does not need to work from the sidebar.")
+        
+    st.info("Your data is automatically saved locally to `attendance.db` in your project folder.")
     st.markdown("</div>", unsafe_allow_html=True)
